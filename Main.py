@@ -13,15 +13,49 @@ def load_numpy_data(file_path):
     return data
 
 
-def propogate_CT_LTI_analytically(X_0, A, t_vec):
+def part1e_plot_measurements():
+    # Load measurement data
+    data = load_numpy_data("Project-Measurements-Easy.npy")
 
-    return X_t
+    # Extract columns
+    t       = data[:, 0]
+    idx     = data[:, 1].astype(int)
+    rho     = data[:, 2]
+    rhodot  = data[:, 3]
+
+    #Figure
+    fig = plt.figure(figsize=(10, 8))
+
+    #Range
+    ax1 = plt.subplot(2, 1, 1)
+    for i in np.unique(idx):
+        mask = idx == i
+        ax1.plot(t[mask], rho[mask], '.', label=f'DSN {i}')
+    ax1.set_ylabel('Range ρ')
+    ax1.set_title('Measurements vs Time')
+    ax1.grid(True)
+    ax1.legend()
+
+    # Range-rate
+    ax2 = plt.subplot(2, 1, 2)
+    for i in np.unique(idx):
+        mask = idx == i
+        ax2.plot(t[mask], rhodot[mask], '.', label=f'DSN {i}')
+    ax2.set_xlabel('Time t')
+    ax2.set_ylabel('Range-rate ṙho')
+    ax2.grid(True)
+
+    plt.tight_layout()
+
+    return fig
+
 
 
 
 def main():
-    propogate_CT_LTI_analytically
-    #plt.show()
+    fig = part1e_plot_measurements()
+    plt.show()
 
-if __name__ == ("__main"
-                "__"):
+
+if __name__ == "__main__":
+    main()
