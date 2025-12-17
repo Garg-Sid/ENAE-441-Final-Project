@@ -19,6 +19,7 @@ DSN_SITES: Dict[int, Dict[str, float]] = {
 }
 
 
+
 def load_numpy_data(file_path: str) -> np.ndarray:
     """Load a numpy file relative to this script."""
     cur_dir = os.path.dirname(os.path.abspath(__file__)) + "/"
@@ -278,10 +279,17 @@ def part3_initial_conditions() -> Tuple[np.ndarray, np.ndarray, float, np.ndarra
     P0 = np.diag(
         [pos_sigma**2, pos_sigma**2, pos_sigma**2, vel_sigma**2, vel_sigma**2, vel_sigma**2]
     )
-    accel_noise_std = 1e-5  # km/s^2
+    accel_noise_std = 1e-6  # km/s^2
     R = measurement_noise_matrix()
     return x0, P0, accel_noise_std, R
 
+def elevation_angle(state: np.ndarray, t: float, station_index: int) -> float:
+    r = state[:3]
+    r_site, _ = site_state_inertial(station_index, t)
+    rho = r - r_site
+    rho_hat = rho / np.linalg.norm(rho)
+    zenith_hat = r_site / np.linalg.norm(r_site)
+    return np.arcsin(np.dot(rho_hat, zenith_hat))  # radians
 
 def run_ekf(
     data: np.ndarray, apply_measurement_updates: bool = True
@@ -323,7 +331,18 @@ def run_ekf(
         H = measurement_jacobian(x, tk, station)
         S = H @ P @ H.T + R
         innovation = meas - y_pred_minus
-        if apply_measurement_updates:
+
+        do_update = apply_measurement_updates
+
+        # ---- NIS consistency check ----
+        if do_update:
+            nu = innovation
+            nis = nu.T @ np.linalg.inv(S) @ nu
+            if nis > 9.21:  # chi-square, 2 DOF, 99%
+                do_update = False
+
+        # ---- Measurement update ----
+        if do_update:
             K = P @ H.T @ np.linalg.inv(S)
             x = x + K @ innovation
             I = np.eye(6)
@@ -410,13 +429,18 @@ def part4_plot_pre_post_covariance(
     labels = ["x", "y", "z", "vx", "vy", "vz"]
     fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
     for idx, ax in enumerate(axes.flatten()):
-        ax.plot(times, 3.0 * sigma_minus[:, idx], "r--", label="+3σ pre" if idx == 0 else None)
-        ax.plot(times, -3.0 * sigma_minus[:, idx], "r--", label="-3σ pre" if idx == 0 else None)
-        ax.plot(times, 3.0 * sigma_plus[:, idx], "b-", label="+3σ post" if idx == 0 else None)
-        ax.plot(times, -3.0 * sigma_plus[:, idx], "b-", label="-3σ post" if idx == 0 else None)
-        ax.axhline(0.0, color="k", linewidth=0.8)
-        ax.set_ylabel(labels[idx])
-        ax.grid(True)
+        ax.plot(times, 3.0 * sigma_plus[:, idx],
+                color="blue", linewidth=2.0, label="+3σ post" if idx == 0 else None)
+        ax.plot(times, -3.0 * sigma_plus[:, idx],
+                color="blue", linewidth=2.0, label="-3σ post" if idx == 0 else None)
+
+        ax.plot(times, 3.0 * sigma_minus[:, idx],
+                color="red", linestyle="--", linewidth=2.5, alpha=0.9,
+                label="+3σ pre" if idx == 0 else None)
+        ax.plot(times, -3.0 * sigma_minus[:, idx],
+                color="red", linestyle="--", linewidth=2.5, alpha=0.9,
+                label="-3σ pre" if idx == 0 else None)
+
     axes[-1, 0].set_xlabel("Time (s)")
     axes[-1, 1].set_xlabel("Time (s)")
     axes[0, 0].legend(loc="upper right")
@@ -471,6 +495,28 @@ def part5_plot_residuals(
     plt.tight_layout()
     return fig
 
+def part5_plot_residuals(
+    times: np.ndarray, stations: np.ndarray, residuals: np.ndarray
+) -> plt.Figure:
+    """Post-fit measurement residuals as a function of time."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    for station in np.unique(stations):
+        mask = stations == station
+        ax1.plot(times[mask], residuals[mask, 0], ".", label=f"DSN {station}")
+        ax2.plot(times[mask], residuals[mask, 1], ".", label=f"DSN {station}")
+    ax1.axhline(0.0, color="k", linewidth=0.8)
+    ax2.axhline(0.0, color="k", linewidth=0.8)
+    ax1.set_ylabel("Range Residual δρ (km)")
+    ax2.set_ylabel("Range-rate Residual δρ̇ (km/s)")
+    ax2.set_xlabel("Time (s)")
+    ax1.grid(True)
+    ax2.grid(True)
+    ax1.legend()
+    ax2.legend()
+    fig.suptitle("Part 5a: Post-fit Measurement Residuals")
+    plt.tight_layout()
+    return fig
+
 
 def part5_plot_state_with_bounds(
     times: np.ndarray, x_plus: np.ndarray, P_plus: np.ndarray
@@ -480,7 +526,7 @@ def part5_plot_state_with_bounds(
     labels = ["x (km)", "y (km)", "z (km)", "vx (km/s)", "vy (km/s)", "vz (km/s)"]
     fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
     for idx, ax in enumerate(axes.flatten()):
-        ax.plot(times, x_plus[:, idx], label="µ+")
+        ax.plot(times, x_plus[:, idx], label="μ+")
         bound = 3.0 * sigma[:, idx]
         ax.plot(times, x_plus[:, idx] + bound, "r--", label="+3σ" if idx == 0 else None)
         ax.plot(times, x_plus[:, idx] - bound, "r--", label="-3σ" if idx == 0 else None)
@@ -515,7 +561,6 @@ def evaluate_residuals(residuals: np.ndarray) -> None:
     print(f"  Range RMS residual: {rms_range:.6e} km (sensor σ ≈ {sigma_r:.6e} km)")
     print(f"  Range-rate RMS residual: {rms_rdot:.6e} km/s (sensor σ ≈ {sigma_rdot:.6e} km/s)")
 
-
 def main():
     print_part2_pseudocode()
     data = load_numpy_data("Project-Measurements-Easy.npy")
@@ -533,6 +578,7 @@ def main():
     evaluate_residuals(ekf_results["residuals"])
     part5_report_final_state(ekf_results["times"], ekf_results["x_plus"], ekf_results["P_plus"])
     plt.show()
+
 
 
 if __name__ == "__main__":
