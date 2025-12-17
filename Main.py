@@ -260,7 +260,11 @@ def coe_to_cartesian_state(
 
 
 # ---- Part 3: Pure prediction implementation ----
-def part3_initial_conditions() -> Tuple[np.ndarray, np.ndarray, float, np.ndarray]:
+def part3_initial_conditions(
+    pos_sigma_km: float = 10.0,
+    vel_sigma_kms: float = 0.05,
+    accel_noise_std: float = 1e-5,
+) -> Tuple[np.ndarray, np.ndarray, float, np.ndarray]:
     """
     Provide x0, P0, process noise tuning, and R.
     Position sigma of 10 km and velocity sigma of 0.01 km/s reflect launch dispersions.
@@ -274,12 +278,16 @@ def part3_initial_conditions() -> Tuple[np.ndarray, np.ndarray, float, np.ndarra
     true_anomaly = 78.75 * DEG2RAD
     r0, v0 = coe_to_cartesian_state(a, e, inc, arg_perigee, raan, true_anomaly)
     x0 = np.hstack((r0, v0))
-    pos_sigma = 10.0  # km
-    vel_sigma = 0.01  # km/s
     P0 = np.diag(
-        [pos_sigma**2, pos_sigma**2, pos_sigma**2, vel_sigma**2, vel_sigma**2, vel_sigma**2]
+        [
+            pos_sigma_km**2,
+            pos_sigma_km**2,
+            pos_sigma_km**2,
+            vel_sigma_kms**2,
+            vel_sigma_kms**2,
+            vel_sigma_kms**2,
+        ]
     )
-    accel_noise_std = 1e-6  # km/s^2
     R = measurement_noise_matrix()
     return x0, P0, accel_noise_std, R
 
@@ -292,15 +300,22 @@ def elevation_angle(state: np.ndarray, t: float, station_index: int) -> float:
     return np.arcsin(np.dot(rho_hat, zenith_hat))  # radians
 
 def run_ekf(
-    data: np.ndarray, apply_measurement_updates: bool = True
+    data: np.ndarray,
+    apply_measurement_updates: bool = True,
+    x0: Optional[np.ndarray] = None,
+    P0: Optional[np.ndarray] = None,
+    accel_noise_std: Optional[float] = None,
+    measurement_noise: Optional[np.ndarray] = None,
 ) -> Dict[str, np.ndarray]:
     """Execute the EKF across all measurements."""
     times = data[:, 0]
     stations = data[:, 1].astype(int)
     measurements = data[:, 2:4]
-    x0, P0, accel_noise_std, R = part3_initial_conditions()
-    x = x0.copy()
-    P = P0.copy()
+    default_x0, default_P0, default_accel, default_R = part3_initial_conditions()
+    x = default_x0.copy() if x0 is None else x0.copy()
+    P = default_P0.copy() if P0 is None else P0.copy()
+    accel_sigma = default_accel if accel_noise_std is None else accel_noise_std
+    R = default_R.copy() if measurement_noise is None else measurement_noise.copy()
     x_minus = []
     P_minus = []
     x_plus = []
@@ -321,7 +336,7 @@ def run_ekf(
             raise ValueError("Measurement times must be non-decreasing.")
         if dt > 0:
             x, phi = discrete_state_transition(t_prev, tk, x)
-            Qk = process_noise_matrix(dt, accel_noise_std)
+            Qk = process_noise_matrix(dt, accel_sigma)
             P = phi @ P @ phi.T + Qk
         else:
             phi = np.eye(6)
@@ -332,17 +347,7 @@ def run_ekf(
         S = H @ P @ H.T + R
         innovation = meas - y_pred_minus
 
-        do_update = apply_measurement_updates
-
-        # ---- NIS consistency check ----
-        if do_update:
-            nu = innovation
-            nis = nu.T @ np.linalg.inv(S) @ nu
-            if nis > 9.21:  # chi-square, 2 DOF, 99%
-                do_update = False
-
-        # ---- Measurement update ----
-        if do_update:
+        if apply_measurement_updates:
             K = P @ H.T @ np.linalg.inv(S)
             x = x + K @ innovation
             I = np.eye(6)
@@ -494,29 +499,6 @@ def part5_plot_residuals(
     fig.suptitle("Part 5a: Post-fit Measurement Residuals")
     plt.tight_layout()
     return fig
-
-def part5_plot_residuals(
-    times: np.ndarray, stations: np.ndarray, residuals: np.ndarray
-) -> plt.Figure:
-    """Post-fit measurement residuals as a function of time."""
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-    for station in np.unique(stations):
-        mask = stations == station
-        ax1.plot(times[mask], residuals[mask, 0], ".", label=f"DSN {station}")
-        ax2.plot(times[mask], residuals[mask, 1], ".", label=f"DSN {station}")
-    ax1.axhline(0.0, color="k", linewidth=0.8)
-    ax2.axhline(0.0, color="k", linewidth=0.8)
-    ax1.set_ylabel("Range Residual δρ (km)")
-    ax2.set_ylabel("Range-rate Residual δρ̇ (km/s)")
-    ax2.set_xlabel("Time (s)")
-    ax1.grid(True)
-    ax2.grid(True)
-    ax1.legend()
-    ax2.legend()
-    fig.suptitle("Part 5a: Post-fit Measurement Residuals")
-    plt.tight_layout()
-    return fig
-
 
 def part5_plot_state_with_bounds(
     times: np.ndarray, x_plus: np.ndarray, P_plus: np.ndarray
