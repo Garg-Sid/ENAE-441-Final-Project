@@ -302,79 +302,105 @@ def elevation_angle(state: np.ndarray, t: float, station_index: int) -> float:
 def run_ekf(
     data: np.ndarray,
     apply_measurement_updates: bool = True,
-    x0: Optional[np.ndarray] = None,
-    P0: Optional[np.ndarray] = None,
-    accel_noise_std: Optional[float] = None,
-    measurement_noise: Optional[np.ndarray] = None,
 ) -> Dict[str, np.ndarray]:
-    """Execute the EKF across all measurements."""
-    times = data[:, 0]
-    stations = data[:, 1].astype(int)
-    measurements = data[:, 2:4]
-    default_x0, default_P0, default_accel, default_R = part3_initial_conditions()
-    x = default_x0.copy() if x0 is None else x0.copy()
-    P = default_P0.copy() if P0 is None else P0.copy()
-    accel_sigma = default_accel if accel_noise_std is None else accel_noise_std
-    R = default_R.copy() if measurement_noise is None else measurement_noise.copy()
-    x_minus = []
-    P_minus = []
-    x_plus = []
-    P_plus = []
-    innovations = []
-    residuals = []
-    yhat_minus = []
-    yhat_plus = []
-    t_prev = times[0]
-    first_step = True
-    for tk, station, meas in zip(times, stations, measurements):
-        if first_step:
-            dt = 0.0
-            first_step = False
-        else:
-            dt = tk - t_prev
-        if dt < 0:
-            raise ValueError("Measurement times must be non-decreasing.")
-        if dt > 0:
-            x, phi = discrete_state_transition(t_prev, tk, x)
-            Qk = process_noise_matrix(dt, accel_sigma)
-            P = phi @ P @ phi.T + Qk
-        else:
-            phi = np.eye(6)
-        x_minus.append(x.copy())
-        P_minus.append(P.copy())
-        y_pred_minus = measurement_function(x, tk, station)
-        H = measurement_jacobian(x, tk, station)
-        S = H @ P @ H.T + R
-        innovation = meas - y_pred_minus
+    """
+    Execute the EKF across all measurements.
+    Innovations use x⁻, residuals use x⁺.
+    Saves S_k for NIS testing.
+    """
 
+    times        = data[:, 0]
+    stations     = data[:, 1].astype(int)
+    measurements = data[:, 2:4]
+
+    x0, P0, accel_sigma, R = part3_initial_conditions()
+
+    N = len(times)
+    n = len(x0)
+
+    # Storage
+    x_minus = np.zeros((N, n))
+    P_minus = np.zeros((N, n, n))
+    x_plus  = np.zeros((N, n))
+    P_plus  = np.zeros((N, n, n))
+
+    innovations = np.zeros((N, 2))   # y − h(x−)
+    residuals   = np.zeros((N, 2))   # y − h(x+)
+    S_all       = np.zeros((N, 2, 2))
+
+    # Initial
+    x = x0.copy()
+    P = P0.copy()
+    t_prev = times[0]
+
+    I = np.eye(n)
+
+    for k, (tk, station, meas) in enumerate(zip(times, stations, measurements)):
+
+        # -------------------------
+        # Prediction step
+        # -------------------------
+        dt = tk - t_prev if k > 0 else 0.0
+
+        if dt > 0.0:
+            x, Phi = discrete_state_transition(t_prev, tk, x)
+            Qk = process_noise_matrix(dt, accel_sigma)
+            P = Phi @ P @ Phi.T + Qk
+
+        x_minus[k, :] = x
+        P_minus[k, :, :] = P
+
+        # -------------------------
+        # Measurement prediction
+        # -------------------------
+        y_hat_minus = measurement_function(x, tk, station)
+        Hk = measurement_jacobian(x, tk, station)
+
+        Sk = Hk @ P @ Hk.T + R
+        S_all[k, :, :] = Sk
+
+        nu = meas - y_hat_minus
+        innovations[k, :] = nu
+
+        # -------------------------
+        # Measurement update
+        # -------------------------
         if apply_measurement_updates:
-            K = P @ H.T @ np.linalg.inv(S)
-            x = x + K @ innovation
-            I = np.eye(6)
-            P = (I - K @ H) @ P @ (I - K @ H).T + K @ R @ K.T
-        else:
-            K = np.zeros((6, 2))
-        y_pred_plus = measurement_function(x, tk, station)
-        residual = meas - y_pred_plus
-        x_plus.append(x.copy())
-        P_plus.append(P.copy())
-        innovations.append(innovation)
-        residuals.append(residual)
-        yhat_minus.append(y_pred_minus)
-        yhat_plus.append(y_pred_plus)
+            # Kalman gain (no explicit inverse)
+            Kk = P @ Hk.T @ np.linalg.solve(Sk, np.eye(2))
+
+            x = x + Kk @ nu
+
+            # Joseph stabilized covariance update
+            P = (I - Kk @ Hk) @ P @ (I - Kk @ Hk).T + Kk @ R @ Kk.T
+
+        x_plus[k, :] = x
+        P_plus[k, :, :] = P
+
+        # -------------------------
+        # Post-fit residuals (CRITICAL)
+        # -------------------------
+        y_hat_plus = measurement_function(x, tk, station)
+        residuals[k, :] = meas - y_hat_plus
+
         t_prev = tk
+
     return {
         "times": times,
         "stations": stations,
-        "x_minus": np.vstack(x_minus),
-        "P_minus": np.stack(P_minus),
-        "x_plus": np.vstack(x_plus),
-        "P_plus": np.stack(P_plus),
-        "innovations": np.vstack(innovations),
-        "residuals": np.vstack(residuals),
-        "yhat_minus": np.vstack(yhat_minus),
-        "yhat_plus": np.vstack(yhat_plus),
+
+        "x_minus": x_minus,
+        "P_minus": P_minus,
+        "x_plus":  x_plus,
+        "P_plus":  P_plus,
+
+        "innovations": innovations,
+        "residuals": residuals,
+        "S": S_all,
     }
+
+
+
 
 
 def part3_prediction_only(data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -424,102 +450,144 @@ def run_part3_prediction_plots(data: Optional[np.ndarray] = None) -> plt.Figure:
     return part3_plot_covariance(times, P_history)
 
 
-# ---- Part 4: Measurement updates ----
 def part4_plot_pre_post_covariance(
     times: np.ndarray, P_minus: np.ndarray, P_plus: np.ndarray
 ) -> plt.Figure:
-    """Plot pre- and post-update ±3σ bounds."""
+    """Part 4b: Pre- and post-update ±3σ bounds with clear styling separation."""
     sigma_minus = np.sqrt(np.array([np.diag(P) for P in P_minus]))
-    sigma_plus = np.sqrt(np.array([np.diag(P) for P in P_plus]))
+    sigma_plus  = np.sqrt(np.array([np.diag(P) for P in P_plus]))
     labels = ["x", "y", "z", "vx", "vy", "vz"]
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
-    for idx, ax in enumerate(axes.flatten()):
-        ax.plot(times, 3.0 * sigma_plus[:, idx],
-                color="blue", linewidth=2.0, label="+3σ post" if idx == 0 else None)
-        ax.plot(times, -3.0 * sigma_plus[:, idx],
-                color="blue", linewidth=2.0, label="-3σ post" if idx == 0 else None)
 
-        ax.plot(times, 3.0 * sigma_minus[:, idx],
-                color="red", linestyle="--", linewidth=2.5, alpha=0.9,
+    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+
+    for idx, ax in enumerate(axes.flatten()):
+        pre  = 3.0 * sigma_minus[:, idx]
+        post = 3.0 * sigma_plus[:, idx]
+
+        # Post (solid)
+        ax.plot(times,  post, linewidth=1.8, label="+3σ post" if idx == 0 else None)
+        ax.plot(times, -post, linewidth=1.8, label="-3σ post" if idx == 0 else None)
+
+        # Pre (dashed)
+        ax.plot(times,  pre,  linestyle="--", linewidth=1.4, alpha=0.9,
                 label="+3σ pre" if idx == 0 else None)
-        ax.plot(times, -3.0 * sigma_minus[:, idx],
-                color="red", linestyle="--", linewidth=2.5, alpha=0.9,
+        ax.plot(times, -pre,  linestyle="--", linewidth=1.4, alpha=0.9,
                 label="-3σ pre" if idx == 0 else None)
+
+        ax.set_ylabel(labels[idx])
+        ax.grid(True)
 
     axes[-1, 0].set_xlabel("Time (s)")
     axes[-1, 1].set_xlabel("Time (s)")
     axes[0, 0].legend(loc="upper right")
+
     fig.suptitle("Part 4b: Pre- vs Post-Update ±3σ Bounds")
     plt.tight_layout()
     return fig
 
-
 def part4_plot_state_difference(
     times: np.ndarray, x_minus: np.ndarray, x_plus: np.ndarray, P_minus: np.ndarray
 ) -> plt.Figure:
-    """Plot µ+ - µ- inside pre-update ±3σ bounds."""
+    """Part 4c: (μ+ − μ−) overlaid with pre-update ±3σ bounds."""
     delta = x_plus - x_minus
     sigma_minus = np.sqrt(np.array([np.diag(P) for P in P_minus]))
     labels = ["x", "y", "z", "vx", "vy", "vz"]
+
     fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+
     for idx, ax in enumerate(axes.flatten()):
-        ax.plot(times, delta[:, idx], label="µ+ - µ-")
         bound = 3.0 * sigma_minus[:, idx]
-        ax.plot(times, bound, "k--", label="+3σ pre" if idx == 0 else None)
-        ax.plot(times, -bound, "k--", label="-3σ pre" if idx == 0 else None)
+
+        ax.plot(times, delta[:, idx], linewidth=1.6, label="μ+ − μ−" if idx == 0 else None)
+        ax.plot(times,  bound, linestyle="--", linewidth=1.2, alpha=0.9,
+                label="+3σ pre" if idx == 0 else None)
+        ax.plot(times, -bound, linestyle="--", linewidth=1.2, alpha=0.9,
+                label="-3σ pre" if idx == 0 else None)
+
         ax.set_ylabel(labels[idx])
         ax.grid(True)
+
     axes[-1, 0].set_xlabel("Time (s)")
     axes[-1, 1].set_xlabel("Time (s)")
     axes[0, 0].legend(loc="upper right")
+
     fig.suptitle("Part 4c: State Update Difference within Pre-Update Bounds")
     plt.tight_layout()
     return fig
+
 
 
 # ---- Part 5: Filter solutions ----
 def part5_plot_residuals(
     times: np.ndarray, stations: np.ndarray, residuals: np.ndarray
 ) -> plt.Figure:
-    """Post-fit measurement residuals as a function of time."""
+    """
+    Part 5a: Post-fit measurement residuals vs time.
+    Plotted in meters and cm/s for readability, with scatter (no connecting lines).
+    """
+    # Convert to intuitive units
+    dr_m = residuals[:, 0] * 1e3          # km -> m
+    drdot_cms = residuals[:, 1] * 1e5     # km/s -> cm/s
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+
     for station in np.unique(stations):
         mask = stations == station
-        ax1.plot(times[mask], residuals[mask, 0], ".", label=f"DSN {station}")
-        ax2.plot(times[mask], residuals[mask, 1], ".", label=f"DSN {station}")
-    ax1.axhline(0.0, color="k", linewidth=0.8)
-    ax2.axhline(0.0, color="k", linewidth=0.8)
-    ax1.set_ylabel("Range Residual δρ (km)")
-    ax2.set_ylabel("Range-rate Residual δρ̇ (km/s)")
+
+        ax1.scatter(times[mask], dr_m[mask], s=10, label=f"DSN {station}", alpha=0.8)
+        ax2.scatter(times[mask], drdot_cms[mask], s=10, label=f"DSN {station}", alpha=0.8)
+
+    ax1.axhline(0.0, linewidth=0.8)
+    ax2.axhline(0.0, linewidth=0.8)
+
+    ax1.set_ylabel("Range Residual δρ (m)")
+    ax2.set_ylabel("Range-rate Residual δρ̇ (cm/s)")
     ax2.set_xlabel("Time (s)")
+
     ax1.grid(True)
     ax2.grid(True)
-    ax1.legend()
-    ax2.legend()
+
+    ax1.legend(loc="upper right")
+    ax2.legend(loc="upper right")
+
     fig.suptitle("Part 5a: Post-fit Measurement Residuals")
     plt.tight_layout()
     return fig
 
+
 def part5_plot_state_with_bounds(
     times: np.ndarray, x_plus: np.ndarray, P_plus: np.ndarray
 ) -> plt.Figure:
-    """Estimated state with ±3σ bounds."""
+    """Part 5c: Estimated state with ±3σ bounds (clear color/linestyle separation)."""
     sigma = np.sqrt(np.array([np.diag(P) for P in P_plus]))
     labels = ["x (km)", "y (km)", "z (km)", "vx (km/s)", "vy (km/s)", "vz (km/s)"]
+
     fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+
     for idx, ax in enumerate(axes.flatten()):
-        ax.plot(times, x_plus[:, idx], label="μ+")
+        mu = x_plus[:, idx]
         bound = 3.0 * sigma[:, idx]
-        ax.plot(times, x_plus[:, idx] + bound, "r--", label="+3σ" if idx == 0 else None)
-        ax.plot(times, x_plus[:, idx] - bound, "r--", label="-3σ" if idx == 0 else None)
+
+        # State estimate
+        ax.plot(times, mu, linewidth=1.8, label="μ+" if idx == 0 else None)
+
+        # Bounds
+        ax.plot(times, mu + bound, linestyle="--", linewidth=1.2, alpha=0.9,
+                label="+3σ" if idx == 0 else None)
+        ax.plot(times, mu - bound, linestyle="--", linewidth=1.2, alpha=0.9,
+                label="-3σ" if idx == 0 else None)
+
         ax.set_ylabel(labels[idx])
         ax.grid(True)
+
     axes[-1, 0].set_xlabel("Time (s)")
     axes[-1, 1].set_xlabel("Time (s)")
     axes[0, 0].legend(loc="upper right")
+
     fig.suptitle("Part 5c: Estimated State with ±3σ Bounds")
     plt.tight_layout()
     return fig
+
 
 
 def part5_report_final_state(times: np.ndarray, x_plus: np.ndarray, P_plus: np.ndarray) -> None:
@@ -543,24 +611,237 @@ def evaluate_residuals(residuals: np.ndarray) -> None:
     print(f"  Range RMS residual: {rms_range:.6e} km (sensor σ ≈ {sigma_r:.6e} km)")
     print(f"  Range-rate RMS residual: {rms_rdot:.6e} km/s (sensor σ ≈ {sigma_rdot:.6e} km/s)")
 
-def main():
-    print_part2_pseudocode()
-    data = load_numpy_data("Project-Measurements-Easy.npy")
-    part1e_plot_measurements(data)
-    run_part3_prediction_plots(data)
-    ekf_results = run_ekf(data, apply_measurement_updates=True)
-    part4_plot_pre_post_covariance(
-        ekf_results["times"], ekf_results["P_minus"], ekf_results["P_plus"]
-    )
-    part4_plot_state_difference(
-        ekf_results["times"], ekf_results["x_minus"], ekf_results["x_plus"], ekf_results["P_minus"]
-    )
-    part5_plot_residuals(ekf_results["times"], ekf_results["stations"], ekf_results["residuals"])
-    part5_plot_state_with_bounds(ekf_results["times"], ekf_results["x_plus"], ekf_results["P_plus"])
-    evaluate_residuals(ekf_results["residuals"])
-    part5_report_final_state(ekf_results["times"], ekf_results["x_plus"], ekf_results["P_plus"])
-    plt.show()
 
+def ekf_performance_tests(results: Dict[str, np.ndarray], R: np.ndarray) -> None:
+    times = results["times"]
+    residuals = results["residuals"]          # y_k - yhat_plus
+    innovations = results["innovations"]      # y_k - yhat_minus
+    P_minus = results["P_minus"]
+    x_minus = results["x_minus"]
+    x_plus = results["x_plus"]
+    S_all = results.get("S", None)
+
+    print("\nEKF Performance Tests")
+
+    # 1) Residual mean near zero
+    r_mean = np.mean(residuals, axis=0)
+    print("Residual mean [range, range-rate] (km, km/s):", r_mean)
+
+    # 2) Residual covariance vs R (rough check)
+    r_cov = np.cov(residuals.T, bias=False)
+    print("\nResidual sample covariance:")
+    print(r_cov)
+    print("\nR used in filter:")
+    print(R)
+
+    # 3) Residual no structure check (lag-1 autocorrelation)
+    def lag1_autocorr(x: np.ndarray) -> float:
+        x0 = x[:-1] - np.mean(x[:-1])
+        x1 = x[1:] - np.mean(x[1:])
+        denom = np.sqrt(np.sum(x0**2) * np.sum(x1**2))
+        return 0.0 if denom == 0 else float(np.sum(x0 * x1) / denom)
+
+    ac_r = lag1_autocorr(residuals[:, 0])
+    ac_rr = lag1_autocorr(residuals[:, 1])
+    print("\nResidual lag-1 autocorr (range, range-rate):", ac_r, ac_rr)
+
+    # 4) Proxy state error test: delta_x within 3sigma(pre)
+    delta_x = x_plus - x_minus
+    sigma_minus = np.sqrt(np.array([np.diag(P) for P in P_minus]))
+    inside = np.abs(delta_x) <= 3.0 * sigma_minus
+    frac_inside = np.mean(inside, axis=0)
+    labels = ["x", "y", "z", "vx", "vy", "vz"]
+    print("\nProxy state error fraction inside 3sigma(pre) by component:")
+    for lab, frac in zip(labels, frac_inside):
+        print(f"  {lab}: {frac:.4f}")
+
+    # 5) NIS test (requires S_k saved)
+    if S_all is None:
+        print("\nNIS test skipped because results['S'] is not saved.")
+        return
+
+    # NIS_k = nu_k^T S_k^{-1} nu_k
+    nis = np.zeros(len(times))
+    for k in range(len(times)):
+        nu = innovations[k].reshape(2, 1)
+        S = S_all[k]
+        nis[k] = (nu.T @ np.linalg.solve(S, nu)).item()
+
+    nis_mean = np.mean(nis)
+    print("\nNIS mean:", nis_mean, "Expected near p=2")
+
+    # Optional chi-square consistency window (95% and 99.7% style)
+    from scipy.stats import chi2
+    p = 2
+    lo95, hi95 = chi2.ppf(0.025, p), chi2.ppf(0.975, p)
+    lo997, hi997 = chi2.ppf(0.0015, p), chi2.ppf(0.9985, p)
+
+    frac95 = np.mean((nis >= lo95) & (nis <= hi95))
+    frac997 = np.mean((nis >= lo997) & (nis <= hi997))
+
+    print("NIS 95% window bounds:", lo95, hi95, "fraction inside:", frac95)
+    print("NIS 99.7% window bounds:", lo997, hi997, "fraction inside:", frac997)
+
+def propagate_dense_prediction(
+    times: np.ndarray,
+    x0: np.ndarray,
+    P0: np.ndarray,
+    accel_noise_std: float,
+    n_substeps: int = 50,
+):
+    """Dense prediction-only propagation for smooth covariance plots."""
+
+    t_dense = [times[0]]
+    P_dense = [P0]
+
+    x = x0.copy()
+    P = P0.copy()
+    t_prev = times[0]
+
+    for tk in times[1:]:
+        dt = tk - t_prev
+        if dt <= 0:
+            continue
+
+        dt_sub = dt / n_substeps
+
+        for i in range(n_substeps):
+            t0 = t_prev + i * dt_sub
+            t1 = t0 + dt_sub
+
+            x, phi = discrete_state_transition(t0, t1, x)
+            Qk = process_noise_matrix(dt_sub, accel_noise_std)
+            P = phi @ P @ phi.T + Qk
+
+            t_dense.append(t1)
+            P_dense.append(P)
+
+        t_prev = tk
+
+    return np.array(t_dense), np.array(P_dense)
+
+def part5c_plot_prediction_bounds_smooth(
+    times: np.ndarray, x0: np.ndarray, P0: np.ndarray, accel_noise_std: float
+) -> plt.Figure:
+    """
+    Prediction-only ±3σ covariance bounds using dense propagation.
+    Blue solid lines = uncertainty bounds.
+    Black dotted line = zero reference.
+    """
+
+    t_dense, P_dense = propagate_dense_prediction(
+        times, x0, P0, accel_noise_std, n_substeps=50
+    )
+
+    sigma = np.sqrt(np.array([np.diag(P) for P in P_dense]))
+    labels = ["x (km)", "y (km)", "z (km)", "vx (km/s)", "vy (km/s)", "vz (km/s)"]
+
+    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+
+    for idx, ax in enumerate(axes.flatten()):
+        bound = 3.0 * sigma[:, idx]
+
+        ax.plot(
+            t_dense, bound,
+            color="tab:blue", linewidth=2.5,
+            label="+3σ bound" if idx == 0 else None
+        )
+        ax.plot(
+            t_dense, -bound,
+            color="tab:blue", linewidth=2.5
+        )
+
+        ax.axhline(0.0, color="k", linestyle=":", linewidth=1.0)
+
+        ax.set_ylabel(labels[idx])
+        ax.grid(True)
+
+    axes[-1, 0].set_xlabel("Time (s)")
+    axes[-1, 1].set_xlabel("Time (s)")
+    axes[0, 0].legend()
+
+    fig.suptitle("Part 5c: Prediction-Only ±3σ Covariance Bounds (Dense Propagation)")
+    plt.tight_layout()
+    return fig
+
+
+def main():
+
+    # -----------------------------
+    # Load data
+    # -----------------------------
+    # print_part2_pseudocode()
+    data = load_numpy_data("Project-Measurements-Easy.npy")
+
+    # -----------------------------
+    # Part 1e: Raw measurements
+    # -----------------------------
+    part1e_plot_measurements(data)
+
+    # -----------------------------
+    # Part 3: Prediction-only (dense propagation)
+    # -----------------------------
+    x0, P0, accel_sigma, _ = part3_initial_conditions()
+
+    fig = part5c_plot_prediction_bounds_smooth(
+        data[:, 0], x0, P0, accel_sigma
+    )
+    fig.suptitle("Part 3: Prediction-only ±3σ Covariance Bounds (Dense Propagation)")
+
+    # -----------------------------
+    # Run EKF with measurement updates
+    # -----------------------------
+    ekf_results = run_ekf(data, apply_measurement_updates=True)
+
+    # -----------------------------
+    # Part 4b: Pre- vs post-update covariance
+    # -----------------------------
+    part4_plot_pre_post_covariance(
+        ekf_results["times"],
+        ekf_results["P_minus"],
+        ekf_results["P_plus"],
+    )
+
+    # -----------------------------
+    # Part 4c: State update difference
+    # -----------------------------
+    part4_plot_state_difference(
+        ekf_results["times"],
+        ekf_results["x_minus"],
+        ekf_results["x_plus"],
+        ekf_results["P_minus"],
+    )
+
+    # -----------------------------
+    # Part 5a: Post-fit residuals (FIXED)
+    # -----------------------------
+    part5_plot_residuals(
+        ekf_results["times"],
+        ekf_results["stations"],
+        ekf_results["residuals"],
+    )
+
+    # -----------------------------
+    # Part 5c: Estimated state with bounds
+    # -----------------------------
+    part5_plot_state_with_bounds(
+        ekf_results["times"],
+        ekf_results["x_plus"],
+        ekf_results["P_plus"],
+    )
+
+    # -----------------------------
+    # Performance tests (NIS, RMS, etc.)
+    # -----------------------------
+    ekf_performance_tests(
+        ekf_results,
+        measurement_noise_matrix()
+    )
+
+    # -----------------------------
+    # Show all figures
+    # -----------------------------
+    plt.show()
 
 
 if __name__ == "__main__":
