@@ -189,46 +189,6 @@ def part1e_plot_measurements(data: Optional[np.ndarray] = None) -> plt.Figure:
     return fig
 
 
-# ---- Part 2: EKF pseudocode ----
-EKF_PSEUDOCODE = """
-Extended Kalman Filter Pseudocode (per-measurement loop)
-Inputs: dynamics f(.), measurement h(.), Jacobians A(.), H(.), process noise Qk, measurement noise Rk,
-        initial state mean x0 and covariance P0, measurements {Yk, tk, station_k}.
-
-for each measurement index k:
-    # Prediction (time update)
-    Propagate state mean using nonlinear dynamics from t_{k-1} to tk:
-        x_minus = PropagateState(x_plus_previous, t_{k-1}, tk)
-    Integrate state-transition matrix Φ(tk, t_{k-1}) alongside propagation.
-    Assemble discrete process noise Qk for the elapsed time Δt.
-    Propagate covariance:
-        P_minus = Φ P_plus_previous Φ^T + Qk
-
-    # Measurement Update (skip if measurement unavailable)
-    Evaluate measurement prediction:
-        y_hat = h(x_minus, tk, station_k)
-    Compute measurement Jacobian:
-        Hk = ∂h/∂x |_{x_minus}
-    Innovation covariance:
-        Sk = Hk P_minus Hk^T + Rk
-    Kalman gain:
-        Kk = P_minus Hk^T Sk^{-1}
-    Innovation:
-        νk = Yk - y_hat
-    Updated state:
-        x_plus = x_minus + Kk νk
-    Updated covariance:
-        P_plus = (I - Kk Hk) P_minus (I - Kk Hk)^T + Kk Rk Kk^T   # numerically stable Joseph form
-
-Return stored {x_minus, P_minus, x_plus, P_plus} for analysis.
-"""
-
-
-def print_part2_pseudocode() -> None:
-    """Display the EKF plan that grading staff can reference."""
-    print(EKF_PSEUDOCODE.strip())
-
-
 # ---- Helper: Keplerian elements to Cartesian state ----
 def rotation_matrix_1(angle: float) -> np.ndarray:
     c = np.cos(angle)
@@ -337,9 +297,8 @@ def run_ekf(
 
     for k, (tk, station, meas) in enumerate(zip(times, stations, measurements)):
 
-        # -------------------------
         # Prediction step
-        # -------------------------
+        # 
         dt = tk - t_prev if k > 0 else 0.0
 
         if dt > 0.0:
@@ -350,9 +309,8 @@ def run_ekf(
         x_minus[k, :] = x
         P_minus[k, :, :] = P
 
-        # -------------------------
         # Measurement prediction
-        # -------------------------
+        # 
         y_hat_minus = measurement_function(x, tk, station)
         Hk = measurement_jacobian(x, tk, station)
 
@@ -362,9 +320,8 @@ def run_ekf(
         nu = meas - y_hat_minus
         innovations[k, :] = nu
 
-        # -------------------------
         # Measurement update
-        # -------------------------
+        # 
         if apply_measurement_updates:
             # Kalman gain (no explicit inverse)
             Kk = P @ Hk.T @ np.linalg.solve(Sk, np.eye(2))
@@ -377,9 +334,8 @@ def run_ekf(
         x_plus[k, :] = x
         P_plus[k, :, :] = P
 
-        # -------------------------
         # Post-fit residuals (CRITICAL)
-        # -------------------------
+        # 
         y_hat_plus = measurement_function(x, tk, station)
         residuals[k, :] = meas - y_hat_plus
 
@@ -846,20 +802,19 @@ def part5c_plot_prediction_bounds_smooth(
 
 def main():
 
-    # -----------------------------
+
     # Load data
-    # -----------------------------
+    # 
     # print_part2_pseudocode()
     data = load_numpy_data("Project-Measurements-Easy.npy")
 
-    # -----------------------------
+
     # Part 1e: Raw measurements
-    # -----------------------------
+    # 
     part1e_plot_measurements(data)
 
-    # -----------------------------
     # Part 3: Prediction-only (dense propagation)
-    # -----------------------------
+    #
     x0, P0, accel_sigma, _ = part3_initial_conditions()
 
     fig = part5c_plot_prediction_bounds_smooth(
@@ -867,23 +822,20 @@ def main():
     )
     fig.suptitle("Part 3c: Pure Prediction of State Over Time")
 
-    # -----------------------------
     # Run EKF with measurement updates
-    # -----------------------------
+    # 
     ekf_results = run_ekf(data, apply_measurement_updates=True)
 
-    # -----------------------------
     # Part 4b: Pre- vs post-update covariance
-    # -----------------------------
+    # 
     part4_plot_pre_post_covariance(
         ekf_results["times"],
         ekf_results["P_minus"],
         ekf_results["P_plus"],
     )
 
-    # -----------------------------
     # Part 4c: State update difference
-    # -----------------------------
+    # 
     part4_plot_state_difference(
         ekf_results["times"],
         ekf_results["x_minus"],
@@ -891,35 +843,40 @@ def main():
         ekf_results["P_minus"],
     )
 
-    # -----------------------------
-    # Part 5a: Post-fit residuals (FIXED)
-    # -----------------------------
+    # Part 5a: Post-fit residuals
+    # 
     part5_plot_residuals(
         ekf_results["times"],
         ekf_results["stations"],
         ekf_results["residuals"],
     )
 
-    # -----------------------------
     # Part 5c: Estimated state with bounds
-    # -----------------------------
+    #
     part5_plot_state_with_bounds(
         ekf_results["times"],
         ekf_results["x_plus"],
         ekf_results["P_plus"],
     )
 
-    # -----------------------------
-    # Performance tests (NIS, RMS, etc.)
-    # -----------------------------
-    ekf_performance_tests(
-        ekf_results,
-        measurement_noise_matrix()
+
+    # Part 5d: Final state estimate
+    # 
+    part5_report_final_state(
+        ekf_results["times"],
+        ekf_results["x_plus"],
+        ekf_results["P_plus"],
     )
 
-    # -----------------------------
+    # Performance tests (NIS, RMS, etc.)
+    #
+    # ekf_performance_tests(
+    #    ekf_results,
+    #    measurement_noise_matrix()
+    # )
+
     # Show all figures
-    # -----------------------------
+    # 
     plt.show()
 
 
