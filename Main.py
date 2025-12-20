@@ -21,7 +21,6 @@ DSN_SITES: Dict[int, Dict[str, float]] = {
 
 
 def load_numpy_data(file_path: str) -> np.ndarray:
-    """Load a numpy file relative to this script."""
     cur_dir = os.path.dirname(os.path.abspath(__file__)) + "/"
     data = np.load(cur_dir + file_path, allow_pickle=True)
     print(f"Loaded data from {file_path}")
@@ -30,7 +29,6 @@ def load_numpy_data(file_path: str) -> np.ndarray:
 
 # ---- Part 1a: Nonlinear dynamics and measurement functions ----
 def continuous_dynamics(_t: float, state: np.ndarray) -> np.ndarray:
-    """f(X): Two-body orbital dynamics with state [r, v]."""
     r = state[:3]
     v = state[3:]
     r_norm = np.linalg.norm(r)
@@ -41,7 +39,6 @@ def continuous_dynamics(_t: float, state: np.ndarray) -> np.ndarray:
 
 
 def site_state_inertial(station_index: int, t: float) -> Tuple[np.ndarray, np.ndarray]:
-    """Return inertial position and velocity of the ground station at time t."""
     site = DSN_SITES[station_index]
     lat = site["lat"]
     lon = site["lon"]
@@ -56,7 +53,6 @@ def site_state_inertial(station_index: int, t: float) -> Tuple[np.ndarray, np.nd
 
 
 def measurement_function(state: np.ndarray, t: float, station_index: int) -> np.ndarray:
-    """h(X): Range and range-rate between spacecraft and station."""
     r = state[:3]
     v = state[3:]
     r_site, v_site = site_state_inertial(station_index, t)
@@ -70,7 +66,6 @@ def measurement_function(state: np.ndarray, t: float, station_index: int) -> np.
 
 # ---- Part 1b: Linearized dynamics and measurement matrices ----
 def dynamics_jacobian(state: np.ndarray) -> np.ndarray:
-    """A(t): Jacobian of dynamics about the current state."""
     r = state[:3]
     r_norm = np.linalg.norm(r)
     if r_norm == 0:
@@ -84,7 +79,6 @@ def dynamics_jacobian(state: np.ndarray) -> np.ndarray:
 
 
 def measurement_jacobian(state: np.ndarray, t: float, station_index: int) -> np.ndarray:
-    """C(t): Jacobian of the measurement function."""
     r = state[:3]
     v = state[3:]
     r_site, v_site = site_state_inertial(station_index, t)
@@ -108,7 +102,6 @@ def measurement_jacobian(state: np.ndarray, t: float, station_index: int) -> np.
 
 # ---- Part 1c: Discretization utilities ----
 def discrete_state_transition(t0: float, t1: float, state0: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Integrate the dynamics and variational equations to get Φ(t1,t0)."""
     def augmented_ode(t, y):
         x = y[:6]
         phi = y[6:].reshape(6, 6)
@@ -134,10 +127,6 @@ def discrete_measurement_matrix(state: np.ndarray, t: float, station_index: int)
 
 # ---- Part 1d: Noise matrices ----
 def process_noise_matrix(dt: float, accel_noise_std: float = 1e-6) -> np.ndarray:
-    """
-    Qk derived from continuous white acceleration noise.
-    accel_noise_std is in km/s^2; Q has units consistent with state [km, km/s].
-    """
     q = accel_noise_std**2
     I3 = np.eye(3)
     Q_rr = (dt**3 / 3.0) * I3
@@ -150,7 +139,6 @@ def process_noise_matrix(dt: float, accel_noise_std: float = 1e-6) -> np.ndarray
 
 
 def measurement_noise_matrix() -> np.ndarray:
-    """Rk using 1 m std-dev in range and 1 cm/s in range-rate expressed in km units."""
     sigma_r_km = 1e-3
     sigma_rdot_km_s = 1e-5
     return np.diag([sigma_r_km**2, sigma_rdot_km_s**2])
@@ -158,7 +146,6 @@ def measurement_noise_matrix() -> np.ndarray:
 
 # ---- Part 1e: Plotting the measurements ----
 def part1e_plot_measurements(data: Optional[np.ndarray] = None) -> plt.Figure:
-    """Scatter plot of range and range-rate grouped by DSN site."""
     if data is None:
         data = load_numpy_data("Project-Measurements-Easy.npy")
     t = data[:, 0]
@@ -205,7 +192,6 @@ def rotation_matrix_3(angle: float) -> np.ndarray:
 def coe_to_cartesian_state(
     a: float, e: float, inc: float, arg_perigee: float, raan: float, true_anomaly: float
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Convert classical orbital elements (km, rad) to ECI position/velocity."""
     p = a * (1.0 - e**2)
     r_pf = (p / (1.0 + e * np.cos(true_anomaly))) * np.array(
         [np.cos(true_anomaly), np.sin(true_anomaly), 0.0]
@@ -225,11 +211,6 @@ def part3_initial_conditions(
     vel_sigma_kms: float = 0.05,
     accel_noise_std: float = 1e-5,
 ) -> Tuple[np.ndarray, np.ndarray, float, np.ndarray]:
-    """
-    Provide x0, P0, process noise tuning, and R.
-    Position sigma of 10 km and velocity sigma of 0.01 km/s reflect launch dispersions.
-    Process noise uses 1e-5 km/s^2 (unmodeled accelerations), R from Part 1d.
-    """
     a = 7000.0
     e = 0.2
     inc = 45.0 * DEG2RAD
@@ -263,11 +244,6 @@ def run_ekf(
     data: np.ndarray,
     apply_measurement_updates: bool = True,
 ) -> Dict[str, np.ndarray]:
-    """
-    Execute the EKF across all measurements.
-    Innovations use x⁻, residuals use x⁺.
-    Saves S_k for NIS testing.
-    """
 
     times        = data[:, 0]
     stations     = data[:, 1].astype(int)
@@ -360,7 +336,6 @@ def run_ekf(
 
 
 def part3_prediction_only(data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Run the EKF prediction step only across all measurement times."""
     results = run_ekf(data, apply_measurement_updates=False)
     return results["times"], results["x_minus"], results["P_minus"]
 
@@ -368,7 +343,6 @@ def part3_prediction_only(data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.
 def part3_plot_covariance(
     times: np.ndarray, states: np.ndarray, covariances: np.ndarray
 ) -> plt.Figure:
-    """Plot predicted state with ±3σ envelopes for each component."""
     diag_entries = np.array([np.diag(P) for P in covariances])
     sigma = np.sqrt(diag_entries)
     pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
@@ -416,7 +390,6 @@ def part3_plot_covariance(
 
 
 def run_part3_prediction_plots(data: Optional[np.ndarray] = None) -> plt.Figure:
-    """Convenience wrapper to run the Part 3 workflow."""
     if data is None:
         data = load_numpy_data("Project-Measurements-Easy.npy")
     times, x_history, P_history = part3_prediction_only(data)
@@ -426,7 +399,6 @@ def run_part3_prediction_plots(data: Optional[np.ndarray] = None) -> plt.Figure:
 def part4_plot_pre_post_covariance(
     times: np.ndarray, P_minus: np.ndarray, P_plus: np.ndarray
 ) -> plt.Figure:
-    """Part 4b: Pre- and post-update ±3σ bounds with clear styling separation."""
     sigma_minus = np.sqrt(np.array([np.diag(P) for P in P_minus]))
     sigma_plus  = np.sqrt(np.array([np.diag(P) for P in P_plus]))
     pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
@@ -476,7 +448,6 @@ def part4_plot_pre_post_covariance(
 def part4_plot_state_difference(
     times: np.ndarray, x_minus: np.ndarray, x_plus: np.ndarray, P_minus: np.ndarray
 ) -> plt.Figure:
-    """Part 4c: (μ+ − μ−) overlaid with pre-update ±3σ bounds."""
     delta = x_plus - x_minus
     sigma_minus = np.sqrt(np.array([np.diag(P) for P in P_minus]))
     pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
@@ -525,10 +496,6 @@ def part4_plot_state_difference(
 def part5_plot_residuals(
     times: np.ndarray, stations: np.ndarray, residuals: np.ndarray
 ) -> plt.Figure:
-    """
-    Part 5a: Post-fit measurement residuals vs time.
-    Plotted in meters and cm/s for readability, with scatter (no connecting lines).
-    """
     # Convert to intuitive units
     dr_m = residuals[:, 0] * 1e3          # km -> m
     drdot_cms = residuals[:, 1] * 1e5     # km/s -> cm/s
@@ -562,7 +529,6 @@ def part5_plot_residuals(
 def part5_plot_state_with_bounds(
     times: np.ndarray, x_plus: np.ndarray, P_plus: np.ndarray
 ) -> plt.Figure:
-    """Part 5c: Estimated state with ±3σ bounds (clear color/linestyle separation)."""
     sigma = np.sqrt(np.array([np.diag(P) for P in P_plus]))
     pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
     vel_labels = ["X Vel (km/s)", "Y Vel (km/s)", "Z Vel (km/s)"]
@@ -609,7 +575,6 @@ def part5_plot_state_with_bounds(
 
 
 def part5_report_final_state(times: np.ndarray, x_plus: np.ndarray, P_plus: np.ndarray) -> None:
-    """Print final state estimate and uncertainty."""
     final_time = times[-1]
     final_state = x_plus[-1]
     final_sigma = np.sqrt(np.diag(P_plus[-1]))
@@ -620,7 +585,6 @@ def part5_report_final_state(times: np.ndarray, x_plus: np.ndarray, P_plus: np.n
 
 
 def evaluate_residuals(residuals: np.ndarray) -> None:
-    """Provide a quick assessment of residual magnitudes vs sensor noise."""
     sigma_r = 1e-3
     sigma_rdot = 1e-5
     rms_range = np.sqrt(np.mean(residuals[:, 0] ** 2))
@@ -707,7 +671,6 @@ def propagate_dense_prediction(
     accel_noise_std: float,
     n_substeps: int = 50,
 ):
-    """Dense prediction-only propagation for smooth state and covariance plots."""
 
     t_dense = [times[0]]
     x_dense = [x0.copy()]
@@ -743,10 +706,6 @@ def propagate_dense_prediction(
 def part5c_plot_prediction_bounds_smooth(
     times: np.ndarray, x0: np.ndarray, P0: np.ndarray, accel_noise_std: float
 ) -> plt.Figure:
-    """
-    Prediction-only state with ±3σ covariance bounds using dense propagation.
-    Blue solid lines = state, shaded band = ±3σ.
-    """
 
     t_dense, x_dense, P_dense = propagate_dense_prediction(
         times, x0, P0, accel_noise_std, n_substeps=50
