@@ -409,35 +409,52 @@ def part3_prediction_only(data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.
     return results["times"], results["x_minus"], results["P_minus"]
 
 
-def part3_plot_covariance(times: np.ndarray, covariances: np.ndarray) -> plt.Figure:
-    """Plot ±3σ envelopes for each state component."""
+def part3_plot_covariance(
+    times: np.ndarray, states: np.ndarray, covariances: np.ndarray
+) -> plt.Figure:
+    """Plot predicted state with ±3σ envelopes for each component."""
     diag_entries = np.array([np.diag(P) for P in covariances])
     sigma = np.sqrt(diag_entries)
-    labels = [
-        "x (km)",
-        "y (km)",
-        "z (km)",
-        "vx (km/s)",
-        "vy (km/s)",
-        "vz (km/s)",
-    ]
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
-    for idx, ax in enumerate(axes.flatten()):
-        upper = 3.0 * sigma[:, idx]
-        lower = -upper
-        ax.plot(times, upper, label="+3σ")
-        ax.plot(times, lower, label="-3σ")
-        ax.axhline(0.0, color="k", linewidth=0.8)
-        ax.set_ylabel(labels[idx])
-        max_span = np.max(np.abs(upper))
-        if max_span > 0:
-            ax.set_ylim(-1.1 * max_span, 1.1 * max_span)
-        ax.grid(True)
-        if idx == 0:
-            ax.legend()
-    axes[-1, 0].set_xlabel("Time (s)")
-    axes[-1, 1].set_xlabel("Time (s)")
-    fig.suptitle("Part 3: Prediction-only ±3σ Covariance Bounds")
+    pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
+    vel_labels = ["X Vel (km/s)", "Y Vel (km/s)", "Z Vel (km/s)"]
+    fig, axes = plt.subplots(2, 3, figsize=(13, 8), sharex=True)
+    for col in range(3):
+        idx_pos = col
+        idx_vel = col + 3
+
+        ax_pos = axes[0, col]
+        mu_pos = states[:, idx_pos]
+        bound_pos = 3.0 * sigma[:, idx_pos]
+        ax_pos.plot(times, mu_pos, color="tab:blue", linewidth=1.5, label="State")
+        ax_pos.fill_between(
+            times,
+            mu_pos - bound_pos,
+            mu_pos + bound_pos,
+            color="tab:blue",
+            alpha=0.2,
+            label="±3σ",
+        )
+        ax_pos.set_ylabel(pos_labels[col])
+        ax_pos.grid(True)
+        ax_pos.legend(loc="upper left")
+
+        ax_vel = axes[1, col]
+        mu_vel = states[:, idx_vel]
+        bound_vel = 3.0 * sigma[:, idx_vel]
+        ax_vel.plot(times, mu_vel, color="tab:blue", linewidth=1.5, label="State")
+        ax_vel.fill_between(
+            times,
+            mu_vel - bound_vel,
+            mu_vel + bound_vel,
+            color="tab:blue",
+            alpha=0.2,
+            label="±3σ",
+        )
+        ax_vel.set_ylabel(vel_labels[col])
+        ax_vel.set_xlabel("Time (s)")
+        ax_vel.grid(True)
+        ax_vel.legend(loc="upper left")
+    fig.suptitle("Part 3c: Pure Prediction of State Over Time")
     plt.tight_layout()
     return fig
 
@@ -446,8 +463,8 @@ def run_part3_prediction_plots(data: Optional[np.ndarray] = None) -> plt.Figure:
     """Convenience wrapper to run the Part 3 workflow."""
     if data is None:
         data = load_numpy_data("Project-Measurements-Easy.npy")
-    times, _, P_history = part3_prediction_only(data)
-    return part3_plot_covariance(times, P_history)
+    times, x_history, P_history = part3_prediction_only(data)
+    return part3_plot_covariance(times, x_history, P_history)
 
 
 def part4_plot_pre_post_covariance(
@@ -456,29 +473,44 @@ def part4_plot_pre_post_covariance(
     """Part 4b: Pre- and post-update ±3σ bounds with clear styling separation."""
     sigma_minus = np.sqrt(np.array([np.diag(P) for P in P_minus]))
     sigma_plus  = np.sqrt(np.array([np.diag(P) for P in P_plus]))
-    labels = ["x", "y", "z", "vx", "vy", "vz"]
+    pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
+    vel_labels = ["X Vel (km/s)", "Y Vel (km/s)", "Z Vel (km/s)"]
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(13, 8), sharex=True)
 
-    for idx, ax in enumerate(axes.flatten()):
-        pre  = 3.0 * sigma_minus[:, idx]
-        post = 3.0 * sigma_plus[:, idx]
+    for col in range(3):
+        idx_pos = col
+        idx_vel = col + 3
 
-        # Post (solid)
-        ax.plot(times,  post, linewidth=1.8, label="+3σ post" if idx == 0 else None)
-        ax.plot(times, -post, linewidth=1.8, label="-3σ post" if idx == 0 else None)
+        ax_pos = axes[0, col]
+        pre_pos = 3.0 * sigma_minus[:, idx_pos]
+        post_pos = 3.0 * sigma_plus[:, idx_pos]
 
-        # Pre (dashed)
-        ax.plot(times,  pre,  linestyle="--", linewidth=1.4, alpha=0.9,
-                label="+3σ pre" if idx == 0 else None)
-        ax.plot(times, -pre,  linestyle="--", linewidth=1.4, alpha=0.9,
-                label="-3σ pre" if idx == 0 else None)
+        ax_pos.plot(times,  post_pos, linewidth=1.8, label="+3σ post" if col == 0 else None)
+        ax_pos.plot(times, -post_pos, linewidth=1.8, label="-3σ post" if col == 0 else None)
+        ax_pos.plot(times,  pre_pos, linestyle="--", linewidth=1.4, alpha=0.9,
+                    label="+3σ pre" if col == 0 else None)
+        ax_pos.plot(times, -pre_pos, linestyle="--", linewidth=1.4, alpha=0.9,
+                    label="-3σ pre" if col == 0 else None)
 
-        ax.set_ylabel(labels[idx])
-        ax.grid(True)
+        ax_pos.set_ylabel(pos_labels[col])
+        ax_pos.grid(True)
 
-    axes[-1, 0].set_xlabel("Time (s)")
-    axes[-1, 1].set_xlabel("Time (s)")
+        ax_vel = axes[1, col]
+        pre_vel = 3.0 * sigma_minus[:, idx_vel]
+        post_vel = 3.0 * sigma_plus[:, idx_vel]
+
+        ax_vel.plot(times,  post_vel, linewidth=1.8, label="+3σ post" if col == 0 else None)
+        ax_vel.plot(times, -post_vel, linewidth=1.8, label="-3σ post" if col == 0 else None)
+        ax_vel.plot(times,  pre_vel, linestyle="--", linewidth=1.4, alpha=0.9,
+                    label="+3σ pre" if col == 0 else None)
+        ax_vel.plot(times, -pre_vel, linestyle="--", linewidth=1.4, alpha=0.9,
+                    label="-3σ pre" if col == 0 else None)
+
+        ax_vel.set_ylabel(vel_labels[col])
+        ax_vel.set_xlabel("Time (s)")
+        ax_vel.grid(True)
+
     axes[0, 0].legend(loc="upper right")
 
     fig.suptitle("Part 4b: Pre- vs Post-Update ±3σ Bounds")
@@ -491,24 +523,40 @@ def part4_plot_state_difference(
     """Part 4c: (μ+ − μ−) overlaid with pre-update ±3σ bounds."""
     delta = x_plus - x_minus
     sigma_minus = np.sqrt(np.array([np.diag(P) for P in P_minus]))
-    labels = ["x", "y", "z", "vx", "vy", "vz"]
+    pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
+    vel_labels = ["X Vel (km/s)", "Y Vel (km/s)", "Z Vel (km/s)"]
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(13, 8), sharex=True)
 
-    for idx, ax in enumerate(axes.flatten()):
-        bound = 3.0 * sigma_minus[:, idx]
+    for col in range(3):
+        idx_pos = col
+        idx_vel = col + 3
 
-        ax.plot(times, delta[:, idx], linewidth=1.6, label="μ+ − μ−" if idx == 0 else None)
-        ax.plot(times,  bound, linestyle="--", linewidth=1.2, alpha=0.9,
-                label="+3σ pre" if idx == 0 else None)
-        ax.plot(times, -bound, linestyle="--", linewidth=1.2, alpha=0.9,
-                label="-3σ pre" if idx == 0 else None)
+        ax_pos = axes[0, col]
+        bound_pos = 3.0 * sigma_minus[:, idx_pos]
 
-        ax.set_ylabel(labels[idx])
-        ax.grid(True)
+        ax_pos.plot(times, delta[:, idx_pos], linewidth=1.6, label="μ+ − μ−" if col == 0 else None)
+        ax_pos.plot(times,  bound_pos, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="+3σ pre" if col == 0 else None)
+        ax_pos.plot(times, -bound_pos, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="-3σ pre" if col == 0 else None)
 
-    axes[-1, 0].set_xlabel("Time (s)")
-    axes[-1, 1].set_xlabel("Time (s)")
+        ax_pos.set_ylabel(pos_labels[col])
+        ax_pos.grid(True)
+
+        ax_vel = axes[1, col]
+        bound_vel = 3.0 * sigma_minus[:, idx_vel]
+
+        ax_vel.plot(times, delta[:, idx_vel], linewidth=1.6, label="μ+ − μ−" if col == 0 else None)
+        ax_vel.plot(times,  bound_vel, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="+3σ pre" if col == 0 else None)
+        ax_vel.plot(times, -bound_vel, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="-3σ pre" if col == 0 else None)
+
+        ax_vel.set_ylabel(vel_labels[col])
+        ax_vel.set_xlabel("Time (s)")
+        ax_vel.grid(True)
+
     axes[0, 0].legend(loc="upper right")
 
     fig.suptitle("Part 4c: State Update Difference within Pre-Update Bounds")
@@ -560,28 +608,42 @@ def part5_plot_state_with_bounds(
 ) -> plt.Figure:
     """Part 5c: Estimated state with ±3σ bounds (clear color/linestyle separation)."""
     sigma = np.sqrt(np.array([np.diag(P) for P in P_plus]))
-    labels = ["x (km)", "y (km)", "z (km)", "vx (km/s)", "vy (km/s)", "vz (km/s)"]
+    pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
+    vel_labels = ["X Vel (km/s)", "Y Vel (km/s)", "Z Vel (km/s)"]
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(13, 8), sharex=True)
 
-    for idx, ax in enumerate(axes.flatten()):
-        mu = x_plus[:, idx]
-        bound = 3.0 * sigma[:, idx]
+    for col in range(3):
+        idx_pos = col
+        idx_vel = col + 3
 
-        # State estimate
-        ax.plot(times, mu, linewidth=1.8, label="μ+" if idx == 0 else None)
+        ax_pos = axes[0, col]
+        mu_pos = x_plus[:, idx_pos]
+        bound_pos = 3.0 * sigma[:, idx_pos]
 
-        # Bounds
-        ax.plot(times, mu + bound, linestyle="--", linewidth=1.2, alpha=0.9,
-                label="+3σ" if idx == 0 else None)
-        ax.plot(times, mu - bound, linestyle="--", linewidth=1.2, alpha=0.9,
-                label="-3σ" if idx == 0 else None)
+        ax_pos.plot(times, mu_pos, linewidth=1.8, label="μ+" if col == 0 else None)
+        ax_pos.plot(times, mu_pos + bound_pos, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="+3σ" if col == 0 else None)
+        ax_pos.plot(times, mu_pos - bound_pos, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="-3σ" if col == 0 else None)
 
-        ax.set_ylabel(labels[idx])
-        ax.grid(True)
+        ax_pos.set_ylabel(pos_labels[col])
+        ax_pos.grid(True)
 
-    axes[-1, 0].set_xlabel("Time (s)")
-    axes[-1, 1].set_xlabel("Time (s)")
+        ax_vel = axes[1, col]
+        mu_vel = x_plus[:, idx_vel]
+        bound_vel = 3.0 * sigma[:, idx_vel]
+
+        ax_vel.plot(times, mu_vel, linewidth=1.8, label="μ+" if col == 0 else None)
+        ax_vel.plot(times, mu_vel + bound_vel, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="+3σ" if col == 0 else None)
+        ax_vel.plot(times, mu_vel - bound_vel, linestyle="--", linewidth=1.2, alpha=0.9,
+                    label="-3σ" if col == 0 else None)
+
+        ax_vel.set_ylabel(vel_labels[col])
+        ax_vel.set_xlabel("Time (s)")
+        ax_vel.grid(True)
+
     axes[0, 0].legend(loc="upper right")
 
     fig.suptitle("Part 5c: Estimated State with ±3σ Bounds")
@@ -689,9 +751,10 @@ def propagate_dense_prediction(
     accel_noise_std: float,
     n_substeps: int = 50,
 ):
-    """Dense prediction-only propagation for smooth covariance plots."""
+    """Dense prediction-only propagation for smooth state and covariance plots."""
 
     t_dense = [times[0]]
+    x_dense = [x0.copy()]
     P_dense = [P0]
 
     x = x0.copy()
@@ -714,53 +777,69 @@ def propagate_dense_prediction(
             P = phi @ P @ phi.T + Qk
 
             t_dense.append(t1)
+            x_dense.append(x.copy())
             P_dense.append(P)
 
         t_prev = tk
 
-    return np.array(t_dense), np.array(P_dense)
+    return np.array(t_dense), np.array(x_dense), np.array(P_dense)
 
 def part5c_plot_prediction_bounds_smooth(
     times: np.ndarray, x0: np.ndarray, P0: np.ndarray, accel_noise_std: float
 ) -> plt.Figure:
     """
-    Prediction-only ±3σ covariance bounds using dense propagation.
-    Blue solid lines = uncertainty bounds.
-    Black dotted line = zero reference.
+    Prediction-only state with ±3σ covariance bounds using dense propagation.
+    Blue solid lines = state, shaded band = ±3σ.
     """
 
-    t_dense, P_dense = propagate_dense_prediction(
+    t_dense, x_dense, P_dense = propagate_dense_prediction(
         times, x0, P0, accel_noise_std, n_substeps=50
     )
 
     sigma = np.sqrt(np.array([np.diag(P) for P in P_dense]))
-    labels = ["x (km)", "y (km)", "z (km)", "vx (km/s)", "vy (km/s)", "vz (km/s)"]
+    pos_labels = ["X Pos (km)", "Y Pos (km)", "Z Pos (km)"]
+    vel_labels = ["X Vel (km/s)", "Y Vel (km/s)", "Z Vel (km/s)"]
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(13, 8), sharex=True)
 
-    for idx, ax in enumerate(axes.flatten()):
-        bound = 3.0 * sigma[:, idx]
+    for col in range(3):
+        idx_pos = col
+        idx_vel = col + 3
 
-        ax.plot(
-            t_dense, bound,
-            color="tab:blue", linewidth=2.5,
-            label="+3σ bound" if idx == 0 else None
+        ax_pos = axes[0, col]
+        mu_pos = x_dense[:, idx_pos]
+        bound_pos = 3.0 * sigma[:, idx_pos]
+        ax_pos.plot(t_dense, mu_pos, color="tab:blue", linewidth=1.5, label="State")
+        ax_pos.fill_between(
+            t_dense,
+            mu_pos - bound_pos,
+            mu_pos + bound_pos,
+            color="tab:blue",
+            alpha=0.2,
+            label="±3σ",
         )
-        ax.plot(
-            t_dense, -bound,
-            color="tab:blue", linewidth=2.5
+        ax_pos.set_ylabel(pos_labels[col])
+        ax_pos.grid(True)
+        ax_pos.legend(loc="upper left")
+
+        ax_vel = axes[1, col]
+        mu_vel = x_dense[:, idx_vel]
+        bound_vel = 3.0 * sigma[:, idx_vel]
+        ax_vel.plot(t_dense, mu_vel, color="tab:blue", linewidth=1.5, label="State")
+        ax_vel.fill_between(
+            t_dense,
+            mu_vel - bound_vel,
+            mu_vel + bound_vel,
+            color="tab:blue",
+            alpha=0.2,
+            label="±3σ",
         )
+        ax_vel.set_ylabel(vel_labels[col])
+        ax_vel.set_xlabel("Time (s)")
+        ax_vel.grid(True)
+        ax_vel.legend(loc="upper left")
 
-        ax.axhline(0.0, color="k", linestyle=":", linewidth=1.0)
-
-        ax.set_ylabel(labels[idx])
-        ax.grid(True)
-
-    axes[-1, 0].set_xlabel("Time (s)")
-    axes[-1, 1].set_xlabel("Time (s)")
-    axes[0, 0].legend()
-
-    fig.suptitle("Part 5c: Prediction-Only ±3σ Covariance Bounds (Dense Propagation)")
+    fig.suptitle("Part 3c: Pure Prediction of State Over Time")
     plt.tight_layout()
     return fig
 
@@ -786,7 +865,7 @@ def main():
     fig = part5c_plot_prediction_bounds_smooth(
         data[:, 0], x0, P0, accel_sigma
     )
-    fig.suptitle("Part 3: Prediction-only ±3σ Covariance Bounds (Dense Propagation)")
+    fig.suptitle("Part 3c: Pure Prediction of State Over Time")
 
     # -----------------------------
     # Run EKF with measurement updates
